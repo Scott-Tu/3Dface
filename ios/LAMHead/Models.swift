@@ -1,6 +1,6 @@
 import Foundation
 
-/// 送到伺服器的生成參數（欄位名稱對應伺服器的 snake_case）
+/// 送到 Kaggle 的生成參數（欄位名稱對應伺服器的 snake_case）
 struct RenderParams: Codable, Equatable {
     var yawMin: Double = -30
     var yawMax: Double = 30
@@ -78,38 +78,7 @@ struct ClientParams: Codable, Equatable {
     var invertPitch = false
     var crossfade = true                   // 相鄰影格交叉淡化，看起來更連續
     var uploadMaxSide: Double = 1024       // 上傳前縮圖的最長邊
-    var pollInterval: Double = 1.5         // 秒
-    var timeoutMinutes: Double = 10
-}
-
-struct HealthResponse: Codable {
-    let status: String
-    let modelLoaded: Bool
-    let loadError: String?
-    let gpu: String?
-    enum CodingKeys: String, CodingKey {
-        case status, modelLoaded = "model_loaded", loadError = "load_error", gpu
-    }
-}
-
-struct DefaultsResponse: Codable {
-    let params: RenderParams
-    let motions: [String]
-}
-
-struct JobStatus: Codable {
-    let jobId: String
-    let status: String          // queued | running | done | error
-    let stage: String
-    let progress: Double
-    let error: String?
-    let queuePosition: Int?
-    let views: Int
-    let elapsed: Double
-    enum CodingKeys: String, CodingKey {
-        case jobId = "job_id", status, stage, progress, error
-        case queuePosition = "queue_position", views, elapsed
-    }
+    var timeoutMinutes: Double = 60        // 等待 Kaggle 的上限（含排隊）
 }
 
 struct FrameInfo: Codable {

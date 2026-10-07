@@ -13,6 +13,7 @@ App 依陀螺儀／拖曳即時切換影格（含交叉淡化），所以手機�
 | 路徑 | 說明 |
 |---|---|
 | `kaggle/lam_server_kaggle.ipynb` | 匯入 Kaggle 直接執行的 notebook（已內含伺服器程式） |
+| `kaggle/KAGGLE_SETUP.md` | Kaggle 端逐步設定說明與常見錯誤排除 |
 | `kaggle/lam_server.py` | 伺服器程式本體（與 notebook 第 5 格相同，方便閱讀或自架） |
 | `ios/LAMHead/*.swift` | iPhone App 原始碼（SwiftUI，iOS 17+） |
 | `ios/project.yml` | XcodeGen 專案設定（自動產生 Xcode 專案） |
@@ -21,7 +22,7 @@ App 依陀螺儀／拖曳即時切換影格（含交叉淡化），所以手機�
 ## 一、Kaggle 端
 
 1. Kaggle → Create → Notebook → File → Import Notebook，選 `lam_server_kaggle.ipynb`。
-2. 右側 Settings：Accelerator 選 **GPU T4**，**Internet 打開**（帳號需完成手機驗證）。
+2. 右側 Settings：Accelerator 選 **GPU T4 x2**，**Internet 打開**（帳號需完成手機驗證）。
 3. （建議）Add-ons → Secrets 新增 `LAM_API_KEY`，填一組自訂密碼，iPhone 就不用每次改金鑰。
 4. 依序執行。第一次第 3 格會編譯 CUDA 套件，約 20–40 分鐘。
 5. **加速下次啟動**：執行完後把 `/kaggle/working/lam_wheels` 存成私人 Dataset，命名 `lam-wheels`，之後加入 notebook 就會跳過編譯。

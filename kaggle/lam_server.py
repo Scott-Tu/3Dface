@@ -4,6 +4,7 @@
 LAM 單張照片 → 3D 頭像 → 多角度渲染 API 伺服器（給 iPhone App 呼叫）
 
 放在 LAM repo 根目錄執行：python lam_server.py
+單次執行：python lam_server.py --once 照片.jpg 參數.json 輸出資料夾
 
 環境變數（全部可選）：
   LAM_API_KEY          API 金鑰；空字串代表不檢查（不建議）
@@ -484,6 +485,39 @@ def job_manifest(jid: str):
 def job_bundle(jid: str):
     return Response(_result_file(jid, "bundle.bin"), media_type="application/octet-stream")
 
+
+def run_once(image_path, params_path, out_dir):
+    """單次執行（給 Kaggle 自動送件用）：生成一次就結束，結果寫到 out_dir/manifest.json、bundle.bin"""
+    os.makedirs(out_dir, exist_ok=True)
+    try:
+        os.makedirs(WORK_DIR, exist_ok=True)
+        with open(params_path, encoding="utf-8") as f:
+            user = json.load(f)
+        p, yaws, pitches = resolve_params(user)
+        img = ImageOps.exif_transpose(Image.open(image_path)).convert("RGB")
+        load_models()
+        jid = uuid.uuid4().hex[:12]
+        jd = os.path.join(WORK_DIR, jid)
+        os.makedirs(jd, exist_ok=True)
+        img.save(os.path.join(jd, f"{jid}.png"))
+        job = {"id": jid, "dir": jd, "params": p, "yaws": yaws, "pitches": pitches,
+               "views": len(yaws) * len(pitches), "status": "running", "stage": "", "progress": 0.0,
+               "error": None, "created": time.time(), "finished": None}
+        JOBS[jid] = job
+        run_job(job)
+        for name in ("manifest.json", "bundle.bin"):
+            shutil.copy(os.path.join(jd, name), os.path.join(out_dir, name))
+        print(f"[LAM] 完成，{job['views']} 個視角", flush=True)
+        return 0
+    except Exception as e:
+        traceback.print_exc()
+        with open(os.path.join(out_dir, "error.txt"), "w", encoding="utf-8") as f:
+            f.write(str(e) or type(e).__name__)
+        return 1
+
+
+if __name__ == "__main__" and len(sys.argv) == 5 and sys.argv[1] == "--once":
+    sys.exit(run_once(*sys.argv[2:]))
 
 if __name__ == "__main__":
     os.makedirs(WORK_DIR, exist_ok=True)
