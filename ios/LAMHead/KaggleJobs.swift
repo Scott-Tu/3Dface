@@ -72,7 +72,11 @@ extension KaggleClient {
             do {
                 (st, failure) = try await kernelStatus(slug: kernel)
             } catch let e as KaggleError {
-                throw e
+                // 剛送出時 Kaggle 可能還查不到這個程式（403／404），先等一下再查
+                if elapsed > 300 { throw e }
+                await onStatus("等待 Kaggle 建立程式…", elapsed)
+                try await Task.sleep(nanoseconds: 20_000_000_000)
+                continue
             } catch is CancellationError {
                 throw CancellationError()
             } catch {

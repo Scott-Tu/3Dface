@@ -57,8 +57,9 @@ final class KaggleEnvModel: ObservableObject {
                     try await wait(client: client, id: id)
                 } else {
                     // 這支 iPhone 沒送過建置工作：直接看 Kaggle 上有沒有可用的環境
-                    let (_, j) = try await client.outputJSON(kernel: KaggleNames.envKernel, file: "env_meta.json")
-                    apply(j)
+                    // Kaggle 上還沒有這個程式時會回 403／404，視為尚未建立
+                    let r = try? await client.outputJSON(kernel: KaggleNames.envKernel, file: "env_meta.json")
+                    apply(r?.json)
                 }
             } catch is CancellationError {
                 status = "已停止等待"
