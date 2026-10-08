@@ -76,8 +76,10 @@ pip install -q --no-build-isolation --no-deps \\
   "git+https://github.com/ashawkey/diff-gaussian-rasterization/" \\
   "nvdiffrast@git+https://github.com/ShenhanQian/nvdiffrast@backface-culling" \\
   "git+https://github.com/camenduru/simple-knn/"
+# 上面用 --no-deps 安裝，pytorch3d 執行時需要的 fvcore、iopath 要另外補
+pip install -q fvcore iopath
 cd external/landmark_detection/FaceBoxesV2/utils/ && sh make.sh > /dev/null
-python -c "import torch, pytorch3d, diff_gaussian_rasterization, simple_knn; print('torch', torch.__version__, 'CUDA', torch.cuda.is_available())"
+python -c "import torch, pytorch3d.io, pytorch3d.ops, pytorch3d.transforms, diff_gaussian_rasterization, simple_knn, nvdiffrast.torch; print('torch', torch.__version__, 'CUDA', torch.cuda.is_available())"
 """, "編譯 CUDA 套件（約 20–40 分鐘）")
     sh("""cd $WORK/LAM
 huggingface-cli download 3DAIGC/LAM-assets --local-dir ./tmp
