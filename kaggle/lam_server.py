@@ -4,6 +4,7 @@
 LAM 單張照片 → 3D 頭像 → 多角度渲染 API 伺服器（給 iPhone App 呼叫）
 
 放在 LAM repo 根目錄執行：python lam_server.py
+單次執行：python lam_server.py --once 照片.jpg 參數.json 輸出資料夾
 
 環境變數（全部可選）：
   LAM_API_KEY          API 金鑰；空字串代表不檢查（不建議）
@@ -75,9 +76,9 @@ DEFAULT_PARAMS = {
     "expression": "neutral",  # neutral＝無表情；motion＝使用 motion 序列該影格的表情
     "motion_name": "",        # 取相機與基準姿態的 motion，空字串＝第一個
     "motion_frame": 0,
-    "base_rotation": "motion",  # motion＝以該影格頭部姿態為基準；frontal＝以正面零旋轉為基準
+    "base_rotation": "camera",  # camera＝頭部正對相機；motion＝以該影格頭部姿態為基準；frontal＝零旋轉
     "yaw_sign": 1,            # 若左右方向相反，改成 -1
-    "pitch_sign": 1,          # 若上下方向相反，改成 -1
+    "pitch_sign": 1,          # 正值＝抬頭；若上下方向相反，改成 -1
     # 效能
     "chunk_size": 64,         # 每批渲染的視角數，GPU 記憶體不足時調小
     "max_views": 400,         # 伺服器端上限（iPhone 不可覆寫）
@@ -94,7 +95,7 @@ NUM_SPEC = {
     "yaw_sign": (int, -1, 1), "pitch_sign": (int, -1, 1),
     "chunk_size": (int, 4, 256),
 }
-CHOICES = {"expression": ["neutral", "motion"], "base_rotation": ["motion", "frontal"]}
+CHOICES = {"expression": ["neutral", "motion"], "base_rotation": ["camera", "motion", "frontal"]}
 SERVER_ONLY = {"max_views"}
 
 
@@ -244,16 +245,34 @@ def cleanup_jobs():
             del JOBS[k]
 
 
-def rotation_for_views(base_aa, views, yaw_sign, pitch_sign):
+def camera_facing_rotation(c2w):
+    """讓 FLAME 頭部（臉朝 +z、頭頂朝 +y）正對相機、頭頂朝畫面上方的旋轉矩陣。
+    c2w 是 OpenCV 慣例（第 2 欄＝相機往前、第 1 欄＝畫面往下）"""
+    c2w = c2w.float()
+    z = -c2w[:3, 2]
+    z = z / z.norm()
+    up = -c2w[:3, 1]
+    y = up - (up @ z) * z
+    y = y / y.norm()
+    x = torch.linalg.cross(y, z)
+    return torch.stack([x, y, z], dim=1)
+
+
+def rotation_for_views(base, views, yaw_sign, pitch_sign, mode):
+    """回傳每個視角的頭部旋轉（axis-angle）。
+    camera 模式下，角度是相對於相機視線的真實角度：yaw＝繞畫面垂直軸轉頭，pitch 正值＝抬頭"""
     from pytorch3d.transforms import axis_angle_to_matrix, matrix_to_axis_angle
-    r0 = axis_angle_to_matrix(base_aa.reshape(1, 3).float())[0]
     out = []
     for yaw, pitch in views:
         y = math.radians(yaw * yaw_sign)
-        x = math.radians(pitch * pitch_sign)
+        x = -math.radians(pitch * pitch_sign)   # 繞 +x 轉正角是低頭，所以取負號讓正值＝抬頭
         ry = axis_angle_to_matrix(torch.tensor([[0.0, y, 0.0]]))[0]
         rx = axis_angle_to_matrix(torch.tensor([[x, 0.0, 0.0]]))[0]
-        out.append(matrix_to_axis_angle((ry @ rx @ r0)[None])[0])
+        if mode == "camera":
+            r = base @ ry @ rx          # 先在頭部座標點頭、轉頭，再整顆轉向相機
+        else:
+            r = ry @ rx @ base
+        out.append(matrix_to_axis_angle(r[None])[0])
     return torch.stack(out)  # [N, 3]
 
 
@@ -309,10 +328,15 @@ def run_job(job):
         for k in ("expr", "jaw_pose", "eyes_pose", "neck_pose", "teeth_bs"):
             if k in fp:
                 fp[k].zero_()
-    base = fp["rotation"][0, 0].clone()
-    if p["base_rotation"] == "frontal":
-        base.zero_()
-    fp["rotation"] = rotation_for_views(base, views, p["yaw_sign"], p["pitch_sign"])[None]
+    from pytorch3d.transforms import axis_angle_to_matrix
+    mode = p["base_rotation"]
+    if mode == "camera":
+        base = camera_facing_rotation(seq["render_c2ws"][0, fi])
+    elif mode == "frontal":
+        base = torch.eye(3)
+    else:
+        base = axis_angle_to_matrix(fp["rotation"][0, 0].reshape(1, 3).float())[0]
+    fp["rotation"] = rotation_for_views(base, views, p["yaw_sign"], p["pitch_sign"], mode)[None]
     fp["betas"] = shape_param.unsqueeze(0)
 
     bg = parse_hex_color(p["bg_color"])
@@ -484,6 +508,41 @@ def job_manifest(jid: str):
 def job_bundle(jid: str):
     return Response(_result_file(jid, "bundle.bin"), media_type="application/octet-stream")
 
+
+def run_once(image_path, params_path, out_dir):
+    """單次執行（給 Kaggle 自動送件用）：生成一次就結束，結果寫到 out_dir/manifest.json、bundle.bin"""
+    os.makedirs(out_dir, exist_ok=True)
+    try:
+        os.makedirs(WORK_DIR, exist_ok=True)
+        with open(params_path, encoding="utf-8") as f:
+            user = json.load(f)
+        p, yaws, pitches = resolve_params(user)
+        img = ImageOps.exif_transpose(Image.open(image_path)).convert("RGB")
+        load_models()
+        jid = uuid.uuid4().hex[:12]
+        jd = os.path.join(WORK_DIR, jid)
+        os.makedirs(jd, exist_ok=True)
+        img.save(os.path.join(jd, f"{jid}.png"))
+        job = {"id": jid, "dir": jd, "params": p, "yaws": yaws, "pitches": pitches,
+               "views": len(yaws) * len(pitches), "status": "running", "stage": "", "progress": 0.0,
+               "error": None, "created": time.time(), "finished": None}
+        JOBS[jid] = job
+        run_job(job)
+        for name in ("manifest.json", "bundle.bin"):
+            shutil.copy(os.path.join(jd, name), os.path.join(out_dir, name))
+        print(f"[LAM] 完成，{job['views']} 個視角", flush=True)
+        return 0
+    except Exception as e:
+        traceback.print_exc()
+        with open(os.path.join(out_dir, "error.txt"), "w", encoding="utf-8") as f:
+            f.write(str(e) or type(e).__name__)
+        return 1
+
+
+if __name__ == "__main__" and len(sys.argv) == 5 and sys.argv[1] == "--once":
+    _args = sys.argv[2:]
+    sys.argv = sys.argv[:1]   # LAM 內部有 argparse 會讀 sys.argv，先清掉，不然會出現 unrecognized arguments
+    sys.exit(run_once(*_args))
 
 if __name__ == "__main__":
     os.makedirs(WORK_DIR, exist_ok=True)

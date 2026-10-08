@@ -3,6 +3,8 @@ import PhotosUI
 
 struct ContentView: View {
     @EnvironmentObject var settings: SettingsStore
+    @EnvironmentObject var env: KaggleEnvModel
+    @AppStorage("kaggleUsername") private var kaggleUsername = ""
     @StateObject private var gen = GenerationModel()
     @State private var photoItem: PhotosPickerItem?
     @State private var showCamera = false
@@ -12,11 +14,17 @@ struct ContentView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    if settings.serverURL.isEmpty {
-                        Label("請先在設定填入 Kaggle 伺服器網址，或用 iPhone 相機掃描 notebook 顯示的 QR Code",
-                              systemImage: "exclamationmark.triangle")
-                            .font(.footnote).foregroundStyle(.orange)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    if kaggleUsername.isEmpty {
+                        notice("請先到右上角設定填入 Kaggle 使用者名稱與 API 金鑰")
+                    } else if !env.ready {
+                        notice("第一次使用前，請到右上角設定按「建立 Kaggle 環境」（只需要做一次）")
+                    }
+                    if let id = gen.pendingJobId, !gen.isBusy {
+                        Button { gen.resume(settings: settings) } label: {
+                            Label("繼續查詢上一次的工作（\(id.prefix(6))）", systemImage: "arrow.clockwise")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
                     }
                     resultArea
                     inputArea
@@ -51,15 +59,8 @@ struct ContentView: View {
         switch gen.phase {
         case .idle:
             EmptyView()
-        case .uploading:
-            progressCard("上傳照片中…", progress: nil)
-        case .processing(let s):
-            progressCard(s.status == "queued"
-                         ? "\(s.stage)\(s.queuePosition.map { "（前面還有 \($0) 個）" } ?? "")"
-                         : "\(s.stage)（\(s.views) 個視角，已 \(Int(s.elapsed)) 秒）",
-                         progress: s.progress)
-        case .downloading:
-            progressCard("下載影格中…", progress: nil)
+        case .working(let title, let detail):
+            progressCard(title, detail: detail)
         case .ready(let frames):
             ViewerView(frames: frames).id(frames.manifest.jobId)
         case .failed(let msg):
@@ -69,11 +70,20 @@ struct ContentView: View {
         }
     }
 
-    private func progressCard(_ text: String, progress: Double?) -> some View {
+    private func notice(_ text: String) -> some View {
+        Label(text, systemImage: "exclamationmark.triangle")
+            .font(.footnote).foregroundStyle(.orange)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func progressCard(_ text: String, detail: String) -> some View {
         VStack(spacing: 10) {
-            if let p = progress { ProgressView(value: p) } else { ProgressView() }
+            ProgressView()
             Text(text).font(.callout).multilineTextAlignment(.center)
-            Button("取消", role: .cancel) { gen.cancel() }.font(.footnote)
+            if !detail.isEmpty {
+                Text(detail).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
+            Button("停止等待", role: .cancel) { gen.cancel() }.font(.footnote)
         }
         .padding()
         .frame(maxWidth: .infinity)
@@ -109,9 +119,9 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(gen.inputImage == nil || gen.isBusy || settings.serverURL.isEmpty)
+            .disabled(gen.inputImage == nil || gen.isBusy || kaggleUsername.isEmpty)
 
-            Text("將生成 \(settings.render.viewCount) 個視角，約 \(String(format: "%.1f", settings.render.estimatedMB)) MB")
+            Text("將生成 \(settings.render.viewCount) 個視角，約 \(String(format: "%.1f", settings.render.estimatedMB)) MB；每次約用 5–15 分鐘 Kaggle GPU 額度")
                 .font(.caption).foregroundStyle(.secondary)
             if let err = settings.render.validationError {
                 Text(err).font(.caption).foregroundStyle(.red)

@@ -2,14 +2,18 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var settings: SettingsStore
+    @EnvironmentObject var env: KaggleEnvModel
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("kaggleUsername") private var username = ""
+    @State private var apiKey = Keychain.get("kaggleKey") ?? ""
     @State private var testMessage: String?
     @State private var testing = false
 
     var body: some View {
         NavigationStack {
             Form {
-                serverSection
+                accountSection
+                envSection
                 angleSection
                 outputSection
                 poseSection
@@ -31,49 +35,64 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: 伺服器
+    // MARK: Kaggle 帳號與環境
 
-    private var serverSection: some View {
+    private var accountSection: some View {
         Section {
-            TextField("https://xxxx.trycloudflare.com", text: $settings.serverURL)
-                .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-            SecureField("API Key", text: $settings.apiKey)
-            HStack {
-                Button("測試連線") { Task { await test() } }
-                Spacer()
-                Button("載入伺服器預設參數") { Task { await loadDefaults() } }
-            }
-            .disabled(testing)
+            TextField("使用者名稱", text: $username)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+            SecureField("API 金鑰", text: $apiKey)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                .onChange(of: apiKey) { _, newValue in
+                    Keychain.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), for: "kaggleKey")
+                    KaggleClient.resetAuthMode()
+                }
+            Button(testing ? "測試中…" : "測試 Kaggle 連線") { Task { await test() } }
+                .disabled(testing)
             if let m = testMessage { Text(m).font(.footnote).foregroundStyle(.secondary) }
         } header: {
-            Text("Kaggle 伺服器")
+            Text("Kaggle 帳號")
         } footer: {
-            Text("每次重開 Kaggle 網址都會改變；用 iPhone 相機掃描 notebook 的 QR Code 可自動更新。")
+            Text("使用者名稱是 kaggle.com/ 後面那段（全小寫）。金鑰在 kaggle.com/settings → API 產生（KGAT_ 開頭的 Token，或 kaggle.json 裡的 key），只存在這支 iPhone 的鑰匙圈。帳號需完成手機驗證才能用 GPU。")
+        }
+    }
+
+    private var envSection: some View {
+        Section {
+            Text(env.status).font(.callout)
+            HStack {
+                Button(env.ready ? "重新建立環境" : "建立 Kaggle 環境") { env.build() }
+                Spacer()
+                Button(env.busy ? "停止等待" : "查詢狀態") { env.busy ? env.stop() : env.refresh() }
+            }
+            .buttonStyle(.borderless)
+            .disabled(username.isEmpty || apiKey.isEmpty)
+        } header: {
+            Text("Kaggle 環境（只需建立一次）")
+        } footer: {
+            Text("會在 Kaggle 上安裝套件、編譯並下載模型（約 40–60 分鐘，中途可以離開 App）。建好之後，每次生成只會用 5–15 分鐘的 GPU 額度，跑完 Kaggle 就自動關閉。")
         }
     }
 
     private func test() async {
         testing = true; defer { testing = false }
+        let u = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let k = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !u.isEmpty, !k.isEmpty else { testMessage = "請先填寫使用者名稱和 API 金鑰"; return }
+        var lines: [String] = []
+        if u != u.lowercased() || u.contains(" ") { lines.append("⚠️ 使用者名稱應該全部小寫、沒有空白（kaggle.com/ 後面那段）") }
+        KaggleClient.resetAuthMode()
+        let client = KaggleClient(username: u, key: k)
         do {
-            let h = try await settings.makeClient().health()
-            if let e = h.loadError { testMessage = "❌ 模型載入失敗：\(e)" }
-            else { testMessage = h.modelLoaded ? "✅ 連線成功（\(h.gpu ?? "GPU")），模型已就緒" : "⏳ 連線成功，模型載入中" }
-            _ = try await settings.makeClient().defaults()   // 順便驗證 API Key
+            let r = try await client.call("datasets.DatasetApiService", "UploadDatasetFile", [
+                "fileName": "lamhead_test.txt", "contentLength": 1,
+                "lastModifiedEpochSeconds": Int(Date().timeIntervalSince1970)])
+            lines.append((r["createUrl"] as? String) != nil ? "✅ 金鑰有效，可以上傳" : "⚠️ Kaggle 沒有回傳上傳網址")
         } catch {
-            testMessage = "❌ \(error.localizedDescription)"
+            lines.append("❌ \(String(error.localizedDescription.prefix(200)))")
         }
-    }
-
-    private func loadDefaults() async {
-        testing = true; defer { testing = false }
-        do {
-            let d = try await settings.makeClient().defaults()
-            settings.render = d.params
-            settings.motions = d.motions
-            testMessage = "✅ 已載入伺服器預設參數（\(d.motions.count) 個 motion）"
-        } catch {
-            testMessage = "❌ \(error.localizedDescription)"
-        }
+        testMessage = lines.joined(separator: "\n")
+        if lines.last?.hasPrefix("✅") == true { env.refresh() }
     }
 
     // MARK: 生成參數
@@ -120,8 +139,9 @@ struct SettingsView: View {
                 Text("使用 motion 影格").tag("motion")
             }
             Picker("基準姿態", selection: $settings.render.baseRotation) {
+                Text("正對相機（建議）").tag("camera")
                 Text("motion 影格").tag("motion")
-                Text("正面").tag("frontal")
+                Text("零旋轉").tag("frontal")
             }
             if settings.motions.isEmpty {
                 TextField("motion 名稱（空白＝第一個）", text: $settings.render.motionName)
@@ -133,14 +153,14 @@ struct SettingsView: View {
                 }
             }
             Stepper("motion 影格：\(settings.render.motionFrame)", value: $settings.render.motionFrame, in: 0...1000)
-            Toggle("伺服器端反轉左右", isOn: Binding(get: { settings.render.yawSign == -1 },
+            Toggle("生成時反轉左右", isOn: Binding(get: { settings.render.yawSign == -1 },
                                               set: { settings.render.yawSign = $0 ? -1 : 1 }))
-            Toggle("伺服器端反轉上下", isOn: Binding(get: { settings.render.pitchSign == -1 },
+            Toggle("生成時反轉上下", isOn: Binding(get: { settings.render.pitchSign == -1 },
                                               set: { settings.render.pitchSign = $0 ? -1 : 1 }))
         } header: {
             Text("表情與姿態")
         } footer: {
-            Text("motion 提供相機位置與基準頭部姿態。若生成結果往左轉時頭像卻往右轉，開啟「伺服器端反轉」後重新生成。")
+            Text("「正對相機」時角度就是相對於鏡頭的真實轉動角度，上下角度正值是抬頭。若方向仍相反，開啟「生成時反轉」後重新生成。")
         }
     }
 
@@ -166,12 +186,15 @@ struct SettingsView: View {
     }
 
     private var networkSection: some View {
-        Section("上傳與等待") {
+        Section {
             Picker("上傳縮圖最長邊", selection: $settings.client.uploadMaxSide) {
                 ForEach([768.0, 1024, 1536, 2048], id: \.self) { Text("\(Int($0)) px").tag($0) }
             }
-            sliderRow("輪詢間隔", value: $settings.client.pollInterval, range: 0.5...5, format: "%.1f 秒")
-            sliderRow("逾時", value: $settings.client.timeoutMinutes, range: 2...30, format: "%.0f 分鐘")
+            sliderRow("等待上限", value: $settings.client.timeoutMinutes, range: 15...180, format: "%.0f 分鐘")
+        } header: {
+            Text("上傳與等待")
+        } footer: {
+            Text("等待上限包含 Kaggle 排隊時間。")
         }
     }
 
