@@ -139,8 +139,9 @@ struct SettingsView: View {
                 Text("使用 motion 影格").tag("motion")
             }
             Picker("基準姿態", selection: $settings.render.baseRotation) {
+                Text("正對相機（建議）").tag("camera")
                 Text("motion 影格").tag("motion")
-                Text("正面").tag("frontal")
+                Text("零旋轉").tag("frontal")
             }
             if settings.motions.isEmpty {
                 TextField("motion 名稱（空白＝第一個）", text: $settings.render.motionName)
@@ -159,7 +160,7 @@ struct SettingsView: View {
         } header: {
             Text("表情與姿態")
         } footer: {
-            Text("motion 提供相機位置與基準頭部姿態。若生成結果往左轉時頭像卻往右轉，開啟「生成時反轉」後重新生成。")
+            Text("「正對相機」時角度就是相對於鏡頭的真實轉動角度，上下角度正值是抬頭。若方向仍相反，開啟「生成時反轉」後重新生成。")
         }
     }
 

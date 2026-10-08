@@ -10,7 +10,7 @@ final class SettingsStore: ObservableObject {
     private let defaults = UserDefaults.standard
 
     init() {
-        render = Self.load(RenderParams.self, key: "render") ?? RenderParams()
+        render = Self.load(RenderParams.self, key: "render_v2") ?? RenderParams()
         client = Self.load(ClientParams.self, key: "client_v2") ?? ClientParams()
     }
 
@@ -20,7 +20,7 @@ final class SettingsStore: ObservableObject {
     }
 
     private func save() {
-        if let d = try? JSONEncoder().encode(render) { defaults.set(d, forKey: "render") }
+        if let d = try? JSONEncoder().encode(render) { defaults.set(d, forKey: "render_v2") }
         if let d = try? JSONEncoder().encode(client) { defaults.set(d, forKey: "client_v2") }
     }
 }

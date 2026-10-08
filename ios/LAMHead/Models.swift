@@ -14,7 +14,7 @@ struct RenderParams: Codable, Equatable {
     var expression: String = "neutral"      // neutral | motion
     var motionName: String = ""
     var motionFrame: Int = 0
-    var baseRotation: String = "motion"     // motion | frontal
+    var baseRotation: String = "camera"     // camera | motion | frontal
     var yawSign: Int = 1
     var pitchSign: Int = 1
 
