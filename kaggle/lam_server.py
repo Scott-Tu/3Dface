@@ -517,7 +517,9 @@ def run_once(image_path, params_path, out_dir):
 
 
 if __name__ == "__main__" and len(sys.argv) == 5 and sys.argv[1] == "--once":
-    sys.exit(run_once(*sys.argv[2:]))
+    _args = sys.argv[2:]
+    sys.argv = sys.argv[:1]   # LAM 內部有 argparse 會讀 sys.argv，先清掉，不然會出現 unrecognized arguments
+    sys.exit(run_once(*_args))
 
 if __name__ == "__main__":
     os.makedirs(WORK_DIR, exist_ok=True)
