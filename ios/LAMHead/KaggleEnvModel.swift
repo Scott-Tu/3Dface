@@ -13,13 +13,25 @@ final class KaggleEnvModel: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "envBuildId") }
     }
 
+    /// 已送出建置、還沒拿到最終結果（App 被關掉或切到背景後，回來要接著查詢，不能重送）
+    @Published private(set) var building: Bool { didSet { UserDefaults.standard.set(building, forKey: "envBuilding") } }
+
     init() {
         let r = UserDefaults.standard.bool(forKey: "envReady")
+        let b = UserDefaults.standard.bool(forKey: "envBuilding")
         ready = r
-        status = r ? "✅ 環境已建立" : "尚未建立（第一次使用前要先建立）"
+        building = b
+        status = b ? "⏳ 上次送出的建置還在 Kaggle 上跑，正在查詢…"
+                   : (r ? "✅ 環境已建立" : "尚未建立（第一次使用前要先建立）")
+        if b { Task { @MainActor in self.refresh() } }
     }
 
-    /// 送出建置工作並等待完成（約 40–60 分鐘；中途離開 App 也沒關係，回來按「查詢狀態」）
+    /// App 回到前景時呼叫：有建置在跑就自動接著等
+    func resumeIfNeeded() {
+        if building && !busy { refresh() }
+    }
+
+    /// 送出建置工作並等待完成（約 40–60 分鐘；中途離開 App 也沒關係，回來會自動接著查詢）
     func build() {
         guard let client = KaggleClient.fromSettings() else { status = "請先填入 Kaggle 使用者名稱與 API 金鑰"; return }
         task?.cancel()
@@ -27,6 +39,13 @@ final class KaggleEnvModel: ObservableObject {
             busy = true
             defer { busy = false }
             do {
+                // Kaggle 上已經有建置在跑時不要重送：重送會取消正在跑的那次、從頭再來
+                let current = building ? (try? await client.kernelStatus(slug: KaggleNames.envKernel))?.status.lowercased() ?? "" : ""
+                if let id = buildId, current.contains("running") || current.contains("queued") {
+                    status = "Kaggle 上的建置還在跑，繼續等它完成（不重新送出）"
+                    try await wait(client: client, id: id)
+                    return
+                }
                 let id = shortId()
                 let script = try KaggleScripts.envScript(buildId: id)
                 status = "送出建置工作…"
@@ -36,6 +55,7 @@ final class KaggleEnvModel: ObservableObject {
                 }
                 buildId = id
                 ready = false
+                building = true
                 try await wait(client: client, id: id)
             } catch is CancellationError {
                 status = "已停止等待；Kaggle 仍在建置，稍後按「查詢狀態」"
@@ -62,7 +82,7 @@ final class KaggleEnvModel: ObservableObject {
                     apply(r?.json)
                 }
             } catch is CancellationError {
-                status = "已停止等待"
+                status = building ? "已停止等待；Kaggle 仍在建置，稍後按「查詢狀態」" : "已停止等待"
             } catch {
                 status = "❌ \(error.localizedDescription)"
             }
@@ -84,6 +104,7 @@ final class KaggleEnvModel: ObservableObject {
     }
 
     private func apply(_ j: [String: Any]?) {
+        if (j?["status"] as? String) != "running" { building = false }
         guard let j else { ready = false; status = "尚未建立（第一次使用前要先建立）"; return }
         let ok = (j["status"] as? String) == "ok"
         let versionOK = (j["env_version"] as? String) == KaggleNames.envVersion

@@ -98,6 +98,9 @@ extension KaggleClient {
                 if s.contains("cancel") && elapsed > 180 {
                     throw KaggleError(message: "Kaggle 上的執行被取消了")
                 }
+                if s.contains("complete") && elapsed > 180 {
+                    throw KaggleError(message: "Kaggle 程式已結束，但沒有留下這次的結果，請到 kaggle.com 查看「\(kernel)」的紀錄")
+                }
             }
             try await Task.sleep(nanoseconds: 20_000_000_000)
         }

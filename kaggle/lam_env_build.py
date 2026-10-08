@@ -42,11 +42,15 @@ def write_meta(**kw):
 
 def sh(cmd, step):
     log("▶", step)
-    r = subprocess.run(["bash", "-c", "set -eo pipefail\n" + cmd], env=ENV,
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    print(r.stdout[-6000:], flush=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"{step} 失敗：\n" + r.stdout[-1500:])
+    # 邊跑邊印，Kaggle 的紀錄才看得到進度（不會像卡住一樣幾十分鐘沒有輸出）
+    p = subprocess.Popen(["bash", "-c", "set -eo pipefail\n" + cmd], env=ENV,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+    tail = []
+    for line in p.stdout:
+        print(line, end="", flush=True)
+        tail = (tail + [line])[-60:]
+    if p.wait() != 0:
+        raise RuntimeError(f"{step} 失敗：\n" + "".join(tail)[-1500:])
 
 
 def main():
