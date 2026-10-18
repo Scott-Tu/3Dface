@@ -10,6 +10,13 @@ targets:
     platform: iOS
     sources:
       - path: LAMHead
+      # Kaggle 腳本打包進 App，每次送件時上傳到 Kaggle
+      - path: ../kaggle/lam_job.py
+        buildPhase: resources
+      - path: ../kaggle/lam_env_build.py
+        buildPhase: resources
+      - path: ../kaggle/lam_server.py
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.lamhead
@@ -26,10 +33,6 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        CFBundleURLTypes:
-          - CFBundleURLName: lamhead
-            CFBundleURLSchemes:
-              - lamhead
 schemes:
   LAMHead:
     build:
